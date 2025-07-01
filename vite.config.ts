@@ -7,4 +7,19 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          charts: ['recharts'],
+          firebase: ['firebase/app', 'firebase/firestore'],
+        },
+      },
+    },
+  },
+  server: {
+    host: true,
+    port: 5173,
+  },
 });

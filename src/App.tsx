@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { BarChart3, Plus } from "lucide-react";
 import SalesEntry from "./components/SalesEntry";
 import Dashboard from "./components/Dashboard";
+import PWAInstallPrompt from "./components/PWAInstallPrompt";
+import OfflineIndicator from "./components/OfflineIndicator";
 
 type TabType = "entry" | "dashboard";
 
@@ -31,6 +33,10 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      {/* PWA Components */}
+      <PWAInstallPrompt />
+      <OfflineIndicator />
+
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
