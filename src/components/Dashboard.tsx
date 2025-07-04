@@ -8,8 +8,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
 } from "recharts";
 import {
   TrendingUp,
@@ -17,14 +15,15 @@ import {
   DollarSign,
   Globe,
   Database,
+  ChevronDown,
 } from "lucide-react";
 // import { salesService } from '../services/salesService';
 import { SalesRecord, ChartData, ViewType, PeriodType } from "../types/sales";
 import {
   formatCurrency,
   getDateRange,
-  getWeekRange,
   getMonthRange,
+  getMonthDaysRange,
 } from "../utils/dateUtils";
 import { useQuery } from "@tanstack/react-query";
 import { collection, getDocs, getFirestore } from "firebase/firestore";
@@ -35,11 +34,16 @@ const Dashboard: React.FC = () => {
   const [chartData, setChartData] = useState<ChartData[]>([]);
   const [viewType, setViewType] = useState<ViewType>("total");
   const [periodType, setPeriodType] = useState<PeriodType>("daily");
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
 
   const [isInitializing, setIsInitializing] = useState(false);
   const firebaseApp = getApp();
 
-  const { isLoading: isFetchingSalesData, data } = useQuery({
+  const { isLoading: isFetchingSalesData, data, refetch } = useQuery({
     queryKey: ["totalSalesData"],
     queryFn: async () => {
       const firestore = getFirestore(firebaseApp as FirebaseApp);
@@ -55,7 +59,20 @@ const Dashboard: React.FC = () => {
     onError(err) {
       console.error("Error fetching sales data:", err);
     },
+    // Refetch data every 30 seconds to catch new entries
+    refetchInterval: 30000,
+    // Refetch when window regains focus
+    refetchOnWindowFocus: true,
   });
+
+  // Expose refetch function globally so it can be called from SalesEntry
+  useEffect(() => {
+    (window as any).refetchDashboardData = refetch;
+    
+    return () => {
+      delete (window as any).refetchDashboardData;
+    };
+  }, [refetch]);
 
   useEffect(() => {
     if (data) {
@@ -65,11 +82,11 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadSalesData();
-  }, [periodType]);
+  }, [periodType, selectedMonth]);
 
   useEffect(() => {
     processChartData();
-  }, [salesData, periodType]);
+  }, [salesData, periodType, selectedMonth]);
 
   const initializeSampleData = async () => {
     setIsInitializing(true);
@@ -89,13 +106,13 @@ const Dashboard: React.FC = () => {
 
       switch (periodType) {
         case "daily":
-          dateRange = getDateRange(7);
+          dateRange = getDateRange(30); // Changed from 7 to 30 days
           break;
         case "weekly":
-          dateRange = getWeekRange(4);
+          dateRange = getMonthRange(12); // Changed to 12 months for monthly view
           break;
         case "monthly":
-          dateRange = getMonthRange(6);
+          dateRange = getMonthDaysRange(selectedMonth); // New: specific month data
           break;
       }
 
@@ -118,14 +135,14 @@ const Dashboard: React.FC = () => {
     let processedData: ChartData[] = [];
 
     if (periodType === "daily") {
-      // Group by individual days
-      const last7Days = Array.from({ length: 7 }, (_, i) => {
+      // Group by individual days for last 30 days
+      const last30Days = Array.from({ length: 30 }, (_, i) => {
         const date = new Date();
         date.setDate(date.getDate() - i);
         return date.toISOString().split("T")[0];
       }).reverse();
 
-      processedData = last7Days.map((date) => {
+      processedData = last30Days.map((date) => {
         const record = salesData.find((r) => r.date === date);
         return {
           date,
@@ -133,70 +150,66 @@ const Dashboard: React.FC = () => {
           online: record?.onlineAmount || 0,
           total: (record?.cashAmount || 0) + (record?.onlineAmount || 0),
           label: new Date(date).toLocaleDateString("en-IN", {
-            weekday: "short",
             day: "2-digit",
+            month: "short",
           }),
         };
       });
     } else if (periodType === "weekly") {
-      // Group by weeks
-      const weeks: {
-        [key: string]: { cash: number; online: number; weekStart: string };
-      } = {};
-
-      salesData.forEach((record) => {
-        const recordDate = new Date(record.date);
-        const weekStart = new Date(recordDate);
-        weekStart.setDate(recordDate.getDate() - recordDate.getDay());
-        const weekKey = weekStart.toISOString().split("T")[0];
-
-        if (!weeks[weekKey]) {
-          weeks[weekKey] = { cash: 0, online: 0, weekStart: weekKey };
-        }
-
-        weeks[weekKey].cash += record.cashAmount;
-        weeks[weekKey].online += record.onlineAmount;
-      });
-
-      processedData = Object.values(weeks)
-        .map((week) => ({
-          date: week.weekStart,
-          cash: week.cash,
-          online: week.online,
-          total: week.cash + week.online,
-          label: `Week of ${new Date(week.weekStart).toLocaleDateString(
-            "en-IN",
-            { month: "short", day: "2-digit" }
-          )}`,
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-    } else {
-      // Group by months
+      // Group by months for last 12 months
       const months: { [key: string]: { cash: number; online: number } } = {};
 
-      salesData.forEach((record) => {
-        const monthKey = record.date.substring(0, 7); // YYYY-MM
+      // Generate last 12 months
+      const last12Months = Array.from({ length: 12 }, (_, i) => {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        return date.toISOString().substring(0, 7); // YYYY-MM format
+      }).reverse();
 
-        if (!months[monthKey]) {
-          months[monthKey] = { cash: 0, online: 0 };
-        }
-
-        months[monthKey].cash += record.cashAmount;
-        months[monthKey].online += record.onlineAmount;
+      // Initialize months with zero values
+      last12Months.forEach(month => {
+        months[month] = { cash: 0, online: 0 };
       });
 
-      processedData = Object.entries(months)
-        .map(([month, data]) => ({
-          date: month,
-          cash: data.cash,
-          online: data.online,
-          total: data.cash + data.online,
-          label: new Date(month + "-01").toLocaleDateString("en-IN", {
-            month: "short",
-            year: "2-digit",
-          }),
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date));
+      // Aggregate sales data by month
+      salesData.forEach((record) => {
+        const monthKey = record.date.substring(0, 7); // YYYY-MM
+        if (months[monthKey]) {
+          months[monthKey].cash += record.cashAmount;
+          months[monthKey].online += record.onlineAmount;
+        }
+      });
+
+      processedData = last12Months.map((month) => ({
+        date: month,
+        cash: months[month].cash,
+        online: months[month].online,
+        total: months[month].cash + months[month].online,
+        label: new Date(month + "-01").toLocaleDateString("en-IN", {
+          month: "short",
+        }),
+      }));
+    } else {
+      // Group by days for selected month
+      const year = parseInt(selectedMonth.split('-')[0]);
+      const month = parseInt(selectedMonth.split('-')[1]) - 1; // JavaScript months are 0-indexed
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      const monthDays = Array.from({ length: daysInMonth }, (_, i) => {
+        const date = new Date(year, month, i + 1);
+        return date.toISOString().split("T")[0];
+      });
+
+      processedData = monthDays.map((date) => {
+        const record = salesData.find((r) => r.date === date);
+        return {
+          date,
+          cash: record?.cashAmount || 0,
+          online: record?.onlineAmount || 0,
+          total: (record?.cashAmount || 0) + (record?.onlineAmount || 0),
+          label: new Date(date).getDate().toString(),
+        };
+      });
     }
 
     setChartData(processedData);
@@ -226,71 +239,55 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const renderChart = () => {
-    if (periodType === "daily") {
-      return (
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="label" stroke="#6b7280" fontSize={12} />
-            <YAxis
-              stroke="#6b7280"
-              fontSize={12}
-              tickFormatter={(value) => `₹${value}`}
-            />
-            <Tooltip
-              formatter={(value: number) => [
-                formatCurrency(value),
-                viewType === "cash"
-                  ? "Cash"
-                  : viewType === "online"
-                  ? "Online"
-                  : "Total",
-              ]}
-              labelStyle={{ color: "#374151" }}
-            />
-            <Bar
-              dataKey={viewType}
-              fill={getChartColor()}
-              radius={[4, 4, 0, 0]}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      );
-    } else {
-      return (
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="label" stroke="#6b7280" fontSize={12} />
-            <YAxis
-              stroke="#6b7280"
-              fontSize={12}
-              tickFormatter={(value) => `₹${value}`}
-            />
-            <Tooltip
-              formatter={(value: number) => [
-                formatCurrency(value),
-                viewType === "cash"
-                  ? "Cash"
-                  : viewType === "online"
-                  ? "Online"
-                  : "Total",
-              ]}
-              labelStyle={{ color: "#374151" }}
-            />
-            <Line
-              type="monotone"
-              dataKey={viewType}
-              stroke={getChartColor()}
-              strokeWidth={3}
-              dot={{ fill: getChartColor(), strokeWidth: 2, r: 6 }}
-              activeDot={{ r: 8, fill: getChartColor() }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      );
+  const generateMonthOptions = () => {
+    const options = [];
+    const currentDate = new Date();
+    
+    // Generate last 24 months for selection
+    for (let i = 0; i < 24; i++) {
+      const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+      const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const label = date.toLocaleDateString("en-IN", {
+        month: "long",
+        year: "numeric",
+      });
+      options.push({ value, label });
     }
+    
+    return options;
+  };
+
+  const getPeriodLabel = () => {
+    switch (periodType) {
+      case "daily":
+        return "Last 30 Days";
+      case "weekly":
+        return "Last 12 Months";
+      case "monthly":
+        const monthDate = new Date(selectedMonth + "-01");
+        return monthDate.toLocaleDateString("en-IN", {
+          month: "long",
+          year: "numeric",
+        });
+      default:
+        return "";
+    }
+  };
+
+  const getButtonClasses = (isActive: boolean, color: string) => {
+    if (isActive) {
+      switch (color) {
+        case "purple":
+          return "bg-purple-500 text-white shadow-lg";
+        case "green":
+          return "bg-green-500 text-white shadow-lg";
+        case "blue":
+          return "bg-blue-500 text-white shadow-lg";
+        default:
+          return "bg-gray-500 text-white shadow-lg";
+      }
+    }
+    return "bg-gray-100 text-gray-700 hover:bg-gray-200";
   };
 
   return (
@@ -308,6 +305,16 @@ const Dashboard: React.FC = () => {
             <p className="text-gray-600">Analyze your sales performance</p>
           </div>
         </div>
+
+        {/* Manual Refresh Button */}
+        <button
+          onClick={() => refetch()}
+          disabled={isFetchingSalesData}
+          className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-600 hover:to-purple-600 transition-all duration-200 disabled:opacity-50"
+        >
+          <Database className={`w-4 h-4 ${isFetchingSalesData ? 'animate-spin' : ''}`} />
+          {isFetchingSalesData ? "Refreshing..." : "Refresh Data"}
+        </button>
 
         {/* Sample Data Button */}
         {chartData.length === 0 && (
@@ -327,11 +334,11 @@ const Dashboard: React.FC = () => {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">
           Time Period
         </h3>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[
-            { key: "daily", label: "Last 7 Days", icon: Calendar },
-            { key: "weekly", label: "Last 4 Weeks", icon: Calendar },
-            { key: "monthly", label: "Last 6 Months", icon: Calendar },
+            { key: "daily", label: "Last 30 Days", icon: Calendar },
+            { key: "weekly", label: "Monthly View (12 Months)", icon: Calendar },
+            { key: "monthly", label: "Select Month", icon: Calendar },
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -347,12 +354,54 @@ const Dashboard: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {/* Month Picker */}
+        {periodType === "monthly" && (
+          <div className="mt-4 relative">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select Month:
+            </label>
+            <div className="relative">
+              <button
+                onClick={() => setShowMonthPicker(!showMonthPicker)}
+                className="w-full md:w-64 bg-white border border-gray-300 rounded-lg px-4 py-2 text-left flex items-center justify-between hover:border-blue-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200"
+              >
+                <span>
+                  {new Date(selectedMonth + "-01").toLocaleDateString("en-IN", {
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${showMonthPicker ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showMonthPicker && (
+                <div className="absolute top-full left-0 right-0 md:right-auto md:w-64 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 max-h-60 overflow-y-auto">
+                  {generateMonthOptions().map(({ value, label }) => (
+                    <button
+                      key={value}
+                      onClick={() => {
+                        setSelectedMonth(value);
+                        setShowMonthPicker(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 hover:bg-blue-50 transition-colors duration-200 ${
+                        selectedMonth === value ? 'bg-blue-100 text-blue-700' : 'text-gray-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* View Type Toggle */}
       <div className="bg-white rounded-2xl shadow-xl p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Sales View</h3>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[
             {
               key: "total",
@@ -376,11 +425,7 @@ const Dashboard: React.FC = () => {
             <button
               key={key}
               onClick={() => setViewType(key as ViewType)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                viewType === key
-                  ? `bg-${color}-500 text-white shadow-lg`
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              }`}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${getButtonClasses(viewType === key, color)}`}
             >
               <Icon className="w-4 h-4" />
               {label}
@@ -406,11 +451,7 @@ const Dashboard: React.FC = () => {
           </div>
           <div className="text-right">
             <p className="text-purple-100 mb-1">
-              {periodType === "daily"
-                ? "Last 7 Days"
-                : periodType === "weekly"
-                ? "Last 4 Weeks"
-                : "Last 6 Months"}
+              {getPeriodLabel()}
             </p>
             <p className="text-lg font-semibold">{chartData.length} Records</p>
           </div>
@@ -425,7 +466,7 @@ const Dashboard: React.FC = () => {
             : viewType === "online"
             ? "Online Sales"
             : "Total Sales"}{" "}
-          Trend
+          Trend - {getPeriodLabel()}
         </h3>
 
         {isFetchingSalesData ? (
@@ -448,7 +489,47 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         ) : (
-          renderChart()
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis 
+                dataKey="label" 
+                stroke="#6b7280" 
+                fontSize={12}
+                angle={periodType === "daily" ? -45 : 0}
+                textAnchor={periodType === "daily" ? "end" : "middle"}
+                height={periodType === "daily" ? 80 : 60}
+              />
+              <YAxis
+                stroke="#6b7280"
+                fontSize={12}
+                tickFormatter={(value) => `₹${value}`}
+              />
+              <Tooltip
+                formatter={(value: number) => [
+                  formatCurrency(value),
+                  viewType === "cash"
+                    ? "Cash"
+                    : viewType === "online"
+                    ? "Online"
+                    : "Total",
+                ]}
+                labelStyle={{ color: "#374151" }}
+                contentStyle={{
+                  backgroundColor: "#ffffff",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "8px",
+                  boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                }}
+              />
+              <Bar
+                dataKey={viewType}
+                fill={getChartColor()}
+                radius={[4, 4, 0, 0]}
+                maxBarSize={60}
+              />
+            </BarChart>
+          </ResponsiveContainer>
         )}
       </div>
     </div>

@@ -45,6 +45,11 @@ const SalesEntry: React.FC<SalesEntryProps> = ({ onSalesAdded }) => {
         toast.success("Sales record saved successfully!", {
           hideProgressBar: true,
         });
+        
+        // Trigger dashboard data refresh
+        if ((window as any).refetchDashboardData) {
+          (window as any).refetchDashboardData();
+        }
       } else if (isOfflineSupported) {
         // Offline: Save to local storage
         await savePendingSale(salesData);

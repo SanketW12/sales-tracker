@@ -44,3 +44,14 @@ export const getMonthRange = (months: number): { startDate: string; endDate: str
     endDate: formatDate(endDate)
   };
 };
+
+export const getMonthDaysRange = (monthString: string): { startDate: string; endDate: string } => {
+  const [year, month] = monthString.split('-').map(Number);
+  const startDate = new Date(year, month - 1, 1); // month - 1 because JS months are 0-indexed
+  const endDate = new Date(year, month, 0); // Last day of the month
+  
+  return {
+    startDate: formatDate(startDate),
+    endDate: formatDate(endDate)
+  };
+};
